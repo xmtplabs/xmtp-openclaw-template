@@ -153,11 +153,16 @@ function sleep(ms) {
 }
 
 const GATEWAY_PROBE_TIMEOUT_MS = 5_000;
+const GATEWAY_READY_INITIAL_DELAY_MS = 3_000;
+const GATEWAY_READY_TIMEOUT_MS = 60_000;
 
 async function waitForGatewayReady(opts = {}) {
-  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const timeoutMs = opts.timeoutMs ?? GATEWAY_READY_TIMEOUT_MS;
   const start = Date.now();
+  await sleep(GATEWAY_READY_INITIAL_DELAY_MS);
   const paths = ["/openclaw", "/clawdbot", "/"];
+  let lastErr = null;
+  let attempt = 0;
   while (Date.now() - start < timeoutMs) {
     if (!gatewayProc) {
       console.error("[gateway] Process exited before becoming ready");
@@ -169,13 +174,22 @@ async function waitForGatewayReady(opts = {}) {
       try {
         const res = await fetch(`${GATEWAY_TARGET}${p}`, { method: "GET", signal: controller.signal });
         clearTimeout(probeTimeoutId);
-        if (res) return true;
-      } catch {
+        if (res) {
+          console.log(`[gateway] ready (${p}) after ${Date.now() - start}ms`);
+          return true;
+        }
+      } catch (e) {
         clearTimeout(probeTimeoutId);
+        lastErr = e;
       }
+    }
+    attempt += 1;
+    if (attempt % 8 === 1 && lastErr) {
+      console.log(`[gateway] probe attempt ${attempt}: ${lastErr?.message ?? lastErr} (elapsed ${Date.now() - start}ms)`);
     }
     await sleep(250);
   }
+  console.error(`[gateway] ready timeout after ${timeoutMs}ms; last error: ${lastErr?.message ?? lastErr}`);
   return false;
 }
 
@@ -258,7 +272,7 @@ async function ensureGatewayRunning() {
   if (!gatewayStarting) {
     gatewayStarting = (async () => {
       await startGateway();
-      const ready = await waitForGatewayReady({ timeoutMs: 20_000 });
+      const ready = await waitForGatewayReady({ timeoutMs: GATEWAY_READY_TIMEOUT_MS });
       if (!ready) {
         throw new Error("Gateway did not become ready in time");
       }
