@@ -20,7 +20,7 @@ RUN corepack enable
 
 WORKDIR /openclaw
 
-# Configurable OpenClaw source - using xmtplabs fork with Convos channel
+# Configurable OpenClaw source - xmtplabs fork with XMTP extension
 # Bump OPENCLAW_CACHE_BUST to force a fresh clone (invalidates Docker cache)
 ARG OPENCLAW_CACHE_BUST=22
 ARG OPENCLAW_GIT_REPO=https://github.com/xmtplabs/openclaw.git
@@ -65,7 +65,7 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"'
 
 COPY src ./src
 
-# Tell the gateway where to find bundled extensions (e.g. Convos channel).
+# Tell the gateway where to find bundled extensions (e.g. XMTP channel).
 ENV OPENCLAW_BUNDLED_PLUGINS_DIR=/openclaw/extensions
 
 # The wrapper listens on this port.

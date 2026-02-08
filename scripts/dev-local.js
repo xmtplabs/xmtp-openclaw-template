@@ -1,4 +1,4 @@
-// Local dev: use sibling openclaw repo. Run from convos-clawdbot-template.
+// Local dev: use sibling openclaw repo. Run from xmtp-openclaw-template.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 

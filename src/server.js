@@ -72,9 +72,9 @@ function saveAuthCredentials(authChoice, envVar, secret) {
       JSON.stringify({ authChoice, envVar, secret }),
       { encoding: "utf8", mode: 0o600 }
     );
-    console.log(`[convos] Persisted auth credentials to ${STATE_DIR}/auth.json`);
+    console.log(`[setup] Persisted auth credentials to ${STATE_DIR}/auth.json`);
   } catch (err) {
-    console.warn("[convos] Failed to persist auth credentials:", err.message);
+    console.warn("[setup] Failed to persist auth credentials:", err.message);
   }
 }
 
@@ -83,7 +83,7 @@ function restoreAuthCredentials() {
     const data = JSON.parse(fs.readFileSync(path.join(STATE_DIR, "auth.json"), "utf8"));
     if (data.envVar && data.secret && !process.env[data.envVar]) {
       process.env[data.envVar] = data.secret;
-      console.log(`[convos] Restored ${data.envVar} from saved auth credentials`);
+      console.log(`[setup] Restored ${data.envVar} from saved auth credentials`);
     }
   } catch {
     // No saved credentials — nothing to restore.
@@ -99,23 +99,19 @@ const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}
 const GATEWAY_PROXY_TIMEOUT_MS = Number.parseInt(process.env.GATEWAY_PROXY_TIMEOUT_MS ?? "60000", 10);
 const GATEWAY_HTTP_TIMEOUT_MS = Number.parseInt(process.env.GATEWAY_HTTP_TIMEOUT_MS ?? "30000", 10);
 
-// XMTP environment (production or dev) - controlled via Railway env var
 const XMTP_ENV = process.env.XMTP_ENV || "production";
 
-// Helper for calling Convos HTTP endpoints on the gateway.
-// The Convos plugin exposes REST routes at /convos/setup, /convos/setup/status, /convos/setup/complete.
-async function convosHttp(path, { method = "GET", body, timeoutMs = GATEWAY_HTTP_TIMEOUT_MS } = {}) {
+async function xmtpHttp(path, { method = "GET", body, timeoutMs = GATEWAY_HTTP_TIMEOUT_MS } = {}) {
   const url = `${GATEWAY_TARGET}${path}`;
   const headers = { Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}` };
-  const opts = { method, headers };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const opts = { method, headers, signal: controller.signal };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    opts.signal = ctrl.signal;
     const res = await fetch(url, opts);
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -123,7 +119,7 @@ async function convosHttp(path, { method = "GET", body, timeoutMs = GATEWAY_HTTP
     }
     return res.json();
   } finally {
-    clearTimeout(t);
+    clearTimeout(timeoutId);
   }
 }
 
@@ -151,18 +147,6 @@ function isConfigured() {
   }
 }
 
-// Check if Convos channel is actually configured (not just that a config file exists).
-// A config file can exist from onboarding without Convos being set up.
-function isConvosConfigured() {
-  try {
-    const raw = fs.readFileSync(configPath(), "utf8");
-    const cfg = JSON.parse(raw);
-    return !!(cfg?.channels?.convos);
-  } catch {
-    return false;
-  }
-}
-
 let gatewayProc = null;
 let gatewayStarting = null;
 
@@ -170,30 +154,23 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-const GATEWAY_READY_PROBE_TIMEOUT_MS = 5_000;
+const GATEWAY_PROBE_TIMEOUT_MS = 5_000;
 
 async function waitForGatewayReady(opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 20_000;
   const start = Date.now();
+  const paths = ["/openclaw", "/clawdbot", "/"];
   while (Date.now() - start < timeoutMs) {
-    try {
-      const paths = ["/openclaw", "/clawdbot", "/"];
-      for (const p of paths) {
-        try {
-          const ctrl = new AbortController();
-          const t = setTimeout(() => ctrl.abort(), GATEWAY_READY_PROBE_TIMEOUT_MS);
-          try {
-            const res = await fetch(`${GATEWAY_TARGET}${p}`, { method: "GET", signal: ctrl.signal });
-            if (res) return true;
-          } finally {
-            clearTimeout(t);
-          }
-        } catch {
-          // try next path
-        }
+    for (const p of paths) {
+      const controller = new AbortController();
+      const probeTimeoutId = setTimeout(() => controller.abort(), GATEWAY_PROBE_TIMEOUT_MS);
+      try {
+        const res = await fetch(`${GATEWAY_TARGET}${p}`, { method: "GET", signal: controller.signal });
+        clearTimeout(probeTimeoutId);
+        if (res) return true;
+      } catch {
+        clearTimeout(probeTimeoutId);
       }
-    } catch {
-      // not ready
     }
     await sleep(250);
   }
@@ -409,18 +386,32 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
     envVarSet: !!(opt.envVar && process.env[opt.envVar]),
   }));
 
+  const configured = isConfigured();
+  let publicAddress;
+  let xmtpConfigured;
+  if (configured) {
+    try {
+      const xmtpStatus = await xmtpHttp("/xmtp/setup/status");
+      publicAddress = xmtpStatus.publicAddress;
+      xmtpConfigured = xmtpStatus.configured;
+    } catch {
+      // gateway not ready or XMTP plugin not loaded
+    }
+  }
+
   res.json({
-    configured: isConfigured(),
-    convosConfigured: isConvosConfigured(),
+    configured,
     gatewayTarget: GATEWAY_TARGET,
     openclawVersion: version.output.trim(),
     channelsAddHelp: channelsHelp.output,
     authGroups,
+    publicAddress: publicAddress ?? undefined,
+    xmtp: publicAddress != null ? { configured: !!xmtpConfigured, publicAddress } : undefined,
   });
 });
 
-// Convos setup endpoint — writes config directly, starts gateway, calls POST /convos/setup
-app.post("/setup/api/convos/setup", requireSetupAuth, async (req, res) => {
+// Setup endpoint — writes config, starts gateway (XMTP-only, no Convos flow)
+app.post("/setup/api/setup", requireSetupAuth, async (req, res) => {
   try {
     const payload = req.body || {};
     const index = parseInt(payload.authGroup ?? payload.authChoice ?? "", 10);
@@ -433,16 +424,15 @@ app.post("/setup/api/convos/setup", requireSetupAuth, async (req, res) => {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
 
-    // Stop any running gateway before rewriting config.
     if (gatewayProc) {
-      console.log("[convos] Stopping existing gateway...");
+      console.log("[setup] Stopping existing gateway...");
       try { gatewayProc.kill("SIGTERM"); } catch {}
       await sleep(750);
       gatewayProc = null;
     }
     gatewayStarting = null;
 
-    console.log("[convos] Writing gateway config...");
+    console.log("[setup] Writing gateway config...");
     const secret = (payload.authSecret || "").trim();
 
     const config = {
@@ -465,84 +455,48 @@ app.post("/setup/api/convos/setup", requireSetupAuth, async (req, res) => {
     };
 
     config.agents = { defaults: { model: { primary: option.model } } };
-    console.log(`[convos] Setting agent model: ${option.model}`);
+    console.log(`[setup] Setting agent model: ${option.model}`);
 
     if (secret && option.envVar) {
       process.env[option.envVar] = secret;
-      console.log(`[convos] Set ${option.envVar} from setup form`);
+      console.log(`[setup] Set ${option.envVar} from setup form`);
       saveAuthCredentials(option.model, option.envVar, secret);
     }
 
     if (option.customProvider) {
       config.models = { mode: "merge", providers: option.customProvider };
-      console.log("[convos] Added custom provider config for", option.model);
+      console.log("[setup] Added custom provider config for", option.model);
     }
 
     fs.writeFileSync(configPath(), JSON.stringify(config, null, 2));
 
-    // Start gateway (config is already written — single clean start)
-    console.log("[convos] Starting gateway...");
+    console.log("[setup] Starting gateway...");
     await ensureGatewayRunning();
 
-    // Call POST /convos/setup on the running gateway
-    console.log("[convos] Calling POST /convos/setup...");
-    let result;
-    for (let attempt = 1; attempt <= 5; attempt++) {
+    let publicAddress;
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        result = await convosHttp("/convos/setup", {
+        const setupRes = await xmtpHttp("/xmtp/setup", {
           method: "POST",
-          body: { env: XMTP_ENV, name: "OpenClaw" },
+          body: { env: XMTP_ENV },
         });
+        publicAddress = setupRes.publicAddress;
         break;
       } catch (err) {
-        if (attempt === 5) throw err;
-        console.log(`[convos] Setup attempt ${attempt} failed, retrying...`);
+        if (attempt === 3) throw err;
+        console.log("[setup] XMTP setup attempt " + attempt + " failed, retrying...");
         await sleep(2000);
       }
     }
+    await xmtpHttp("/xmtp/setup/complete", { method: "POST" });
 
-    res.json({
-      success: true,
-      inviteUrl: result.inviteUrl,
-      conversationId: result.conversationId,
-    });
+    res.json({ success: true, publicAddress });
   } catch (err) {
-    console.error("[convos] Setup failed:", err);
+    console.error("[setup] Setup failed:", err);
     res.status(500).json({
       success: false,
       error: err.message || String(err),
     });
-  }
-});
-
-// Convos join status endpoint - passthrough to GET /convos/setup/status
-app.get("/setup/api/convos/join-status", requireSetupAuth, async (req, res) => {
-  try {
-    const result = await convosHttp("/convos/setup/status");
-    res.json({
-      joined: result.joined,
-      joinerInboxId: result.joinerInboxId || null,
-      active: result.active,
-    });
-  } catch (err) {
-    // If gateway is not running or endpoint fails, return not-joined state
-    res.json({ joined: false, joinerInboxId: null, error: err.message });
-  }
-});
-
-// Convos complete-setup endpoint - calls POST /convos/setup/complete
-app.post("/setup/api/convos/complete-setup", requireSetupAuth, async (req, res) => {
-  try {
-    const result = await convosHttp("/convos/setup/complete", { method: "POST" });
-    console.log("[convos] Setup complete:", result);
-
-    res.json({
-      ok: true,
-      conversationId: result.conversationId,
-    });
-  } catch (err) {
-    console.error("[/setup/api/convos/complete-setup] error:", err);
-    return res.status(500).json({ ok: false, error: String(err) });
   }
 });
 

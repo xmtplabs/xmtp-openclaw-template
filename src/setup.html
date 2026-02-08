@@ -72,6 +72,13 @@
       text-decoration: none;
     }
 
+    .header.setup-required .settings-link {
+      opacity: 0.5;
+      color: #999;
+      pointer-events: none;
+      cursor: not-allowed;
+    }
+
     .status-badge {
       display: flex;
       align-items: center;
@@ -122,15 +129,9 @@
 
     .main-content {
       display: grid;
-      grid-template-columns: 1fr 340px;
+      grid-template-columns: 1fr;
       gap: 24px;
       margin-bottom: 24px;
-    }
-
-    @media (max-width: 768px) {
-      .main-content {
-        grid-template-columns: 1fr;
-      }
     }
 
     .card {
@@ -165,10 +166,6 @@
       margin-top: 8px;
       font-size: 14px;
       color: #666;
-    }
-
-    #convos-qr {
-      border-radius: 16px;
     }
 
     .qr-info {
@@ -482,13 +479,33 @@
     .hidden {
       display: none !important;
     }
+
+    .status-connected {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      background: #E8F5E9;
+      color: #2E7D32;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .status-connected-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #34C759;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <header class="header">
+    <header class="header setup-required" id="setup-header">
       <div class="logo-container">
-        <span class="logo-text">OpenClaw</span>
+        <span class="logo-text">OpenClaw 🤝 XMTP</span>
       </div>
       <div class="header-right">
         <a href="/openclaw" target="_blank" rel="noopener" class="settings-link" title="Open OpenClaw UI">Settings 🦀</a>
@@ -502,53 +519,37 @@
 
     <div class="main-content">
       <div class="card">
-        <h3>Connect via Convos</h3>
-        <div class="qr-container">
-          <img id="convos-qr" style="display: none; border-radius: 8px; width: 200px; height: 200px;" alt="Scan to connect" />
-          <div id="convos-qr-wrap" style="display: none; width: 200px; height: 200px;"></div>
-          <div id="convos-loading" class="qr-placeholder">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
-              <rect x="3" y="3" width="7" height="7" rx="1" />
-              <rect x="14" y="3" width="7" height="7" rx="1" />
-              <rect x="3" y="14" width="7" height="7" rx="1" />
-              <rect x="14" y="14" width="3" height="3" />
-              <rect x="18" y="14" width="3" height="3" />
-              <rect x="14" y="18" width="3" height="3" />
-              <rect x="18" y="18" width="3" height="3" />
-            </svg>
-            <p>Click "Start Setup" to begin</p>
-          </div>
-          <div class="qr-info" id="qr-info" style="display: none;">
-            <div class="qr-info-row">
-              <span class="qr-info-label">Status</span>
-              <span class="qr-info-value status waiting" id="join-status">Waiting</span>
-            </div>
-          </div>
-          <div class="invite-url" id="convos-invite-url" style="display: none;" onclick="copyInvite(this)" title="Click to copy"></div>
-        </div>
-      </div>
+        <h3>Connect to XMTP</h3>
 
-      <div class="card">
-        <h3>Model Configuration</h3>
+        <div id="setup-fields">
+          <div class="setting-group">
+            <label class="setting-label" for="authGroup">Provider</label>
+            <select id="authGroup" class="setting-input"></select>
+          </div>
 
-        <div class="setting-group">
-          <label class="setting-label" for="authGroup">Provider</label>
-          <select id="authGroup" class="setting-input"></select>
+          <div class="setting-group">
+            <label class="setting-label" for="authSecret">API Key</label>
+            <input id="authSecret" type="password" class="setting-input" placeholder="Paste API key" />
+            <span id="authSecretHint" class="setting-hint hidden">Loaded from .env</span>
+          </div>
         </div>
 
-        <div class="setting-group">
-          <label class="setting-label" for="authSecret">API Key</label>
-          <input id="authSecret" type="password" class="setting-input" placeholder="Paste API key or token" />
-          <span id="authSecretHint" class="setting-hint hidden">Loaded from .env</span>
+        <div id="xmtp-address-block" class="setting-group" style="display: none;">
+          <div class="status-connected">
+            <span class="status-connected-dot"></span>
+            <span class="status-connected-text">Connected</span>
+          </div>
+          <label class="setting-label">XMTP address</label>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <code id="xmtp-address-value" style="flex: 1; padding: 12px 16px; background: #F5F5F5; border-radius: 12px; font-size: 13px; word-break: break-all; cursor: pointer;" title="Click to copy"></code>
+            <button type="button" id="xmtp-address-copy" class="btn-secondary">Copy</button>
+          </div>
         </div>
       </div>
     </div>
 
     <button id="startSetup" class="btn-primary">
       Start Setup
-    </button>
-    <button id="completeSetup" class="btn-primary" style="display: none;">
-      Finish Setup
     </button>
 
     <div id="setup-error" class="error-message"></div>

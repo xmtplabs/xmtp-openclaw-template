@@ -3,5 +3,4 @@
 ## [Unreleased]
 
 ### Changed
-- Convos setup: generate QR client-side via qrcodejs instead of server `qrDataUrl`
-- Removed `qrDataUrl` from `/setup/api/convos/setup` response
+- Setup: single-step flow (write config + start gateway); removed Convos QR/invite flow

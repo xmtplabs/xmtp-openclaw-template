@@ -33,17 +33,21 @@
 
   // Buttons
   var startSetupBtn = document.getElementById('startSetup');
-  var completeSetupBtn = document.getElementById('completeSetup');
 
   // API key input
   var authSecretEl = document.getElementById('authSecret');
   var authSecretHintEl = document.getElementById('authSecretHint');
 
+  // XMTP address display
+  var xmtpAddressBlock = document.getElementById('xmtp-address-block');
+  var xmtpAddressValue = document.getElementById('xmtp-address-value');
+  var xmtpAddressCopyBtn = document.getElementById('xmtp-address-copy');
+  var setupFieldsEl = document.getElementById('setup-fields');
+
   // Auth groups from status (includes envVarSet per provider)
   var authGroupsData = [];
 
   // State tracking
-  var convosJoined = false;
   var statusCheckInProgress = true;
 
   function setStatus(text, state) {
@@ -134,6 +138,28 @@
     startSetupBtn.disabled = !hasApiKey;
   }
 
+  function setXmtpAddress(addr) {
+    if (!addr) {
+      if (xmtpAddressBlock) xmtpAddressBlock.style.display = 'none';
+      if (setupFieldsEl) setupFieldsEl.style.display = '';
+      return;
+    }
+    if (xmtpAddressValue) xmtpAddressValue.textContent = addr;
+    if (xmtpAddressBlock) xmtpAddressBlock.style.display = '';
+    if (setupFieldsEl) setupFieldsEl.style.display = 'none';
+  }
+
+  function copyXmtpAddress() {
+    if (!xmtpAddressValue || !xmtpAddressValue.textContent) return;
+    navigator.clipboard.writeText(xmtpAddressValue.textContent).then(function () {
+      if (xmtpAddressCopyBtn) {
+        var t = xmtpAddressCopyBtn.textContent;
+        xmtpAddressCopyBtn.textContent = 'Copied!';
+        setTimeout(function () { xmtpAddressCopyBtn.textContent = t; }, 1500);
+      }
+    });
+  }
+
   function applyAuthSecretFromEnv() {
     if (!authSecretEl || !authSecretHintEl) return;
     var idx = authGroupEl ? parseInt(authGroupEl.value, 10) : -1;
@@ -147,11 +173,13 @@
     } else {
       authSecretEl.disabled = false;
       authSecretEl.classList.remove('from-env');
-      authSecretEl.placeholder = 'Paste API key or token';
+      authSecretEl.placeholder = 'Paste API key';
       authSecretHintEl.classList.add('hidden');
     }
     updateStartSetupEnabled();
   }
+
+  var setupHeaderEl = document.getElementById('setup-header');
 
   function refreshStatus() {
     setStatus('Loading...', 'pending');
@@ -160,13 +188,19 @@
       statusCheckInProgress = false;
       authGroupsData = j.authGroups || [];
       var ver = j.openclawVersion ? j.openclawVersion : '';
+      if (setupHeaderEl) setupHeaderEl.classList.toggle('setup-required', !j.configured);
       if (j.configured) {
         setStatus('Ready' + (ver ? ' - ' + ver : ''), 'success');
+        if (startSetupBtn) startSetupBtn.style.display = 'none';
       } else {
         setStatus('Setup required' + (ver ? ' - ' + ver : ''), 'pending');
+        if (startSetupBtn) startSetupBtn.style.display = '';
       }
       renderAuth(authGroupsData);
       applyAuthSecretFromEnv();
+
+      var addr = j.publicAddress || (j.xmtp && j.xmtp.publicAddress);
+      setXmtpAddress(addr);
 
       setStartSetupLoading(false);
 
@@ -291,25 +325,10 @@
         .then(function (res) { return res.text(); })
         .then(function (t) {
           appendLog(t + '\n');
-          // Restore UI to initial state so setup can be rerun
-          convosJoined = false;
           if (startSetupBtn) {
             startSetupBtn.style.display = '';
             startSetupBtn.disabled = false;
             startSetupBtn.textContent = 'Start Setup';
-          }
-          if (completeSetupBtn) completeSetupBtn.style.display = 'none';
-          var qrImg = document.getElementById('convos-qr');
-          if (qrImg) qrImg.style.display = 'none';
-          var qrWrap = document.getElementById('convos-qr-wrap');
-          if (qrWrap) { qrWrap.innerHTML = ''; qrWrap.style.display = 'none'; }
-          var qrInfoEl = document.getElementById('qr-info');
-          if (qrInfoEl) qrInfoEl.style.display = 'none';
-          var loadingEl = document.getElementById('convos-loading');
-          if (loadingEl) {
-            var t = document.getElementById('snippet-loading-idle');
-            loadingEl.innerHTML = t ? t.innerHTML : '';
-            loadingEl.style.display = '';
           }
           return refreshStatus();
         })
@@ -317,7 +336,7 @@
     };
   }
 
-  // Start Setup - runs onboarding, starts gateway, calls convos.setup RPC
+  // Start Setup - writes config, starts gateway (XMTP-only)
   function runStartSetup() {
     if (!startSetupBtn) return;
 
@@ -333,15 +352,9 @@
     var btnTpl = document.getElementById('snippet-btn-loading');
     startSetupBtn.innerHTML = btnTpl ? btnTpl.innerHTML : 'Loading...';
     setStatus('Loading...', 'pending');
-    showLog('Starting onboarding...\n');
+    showLog('Starting setup...\n');
 
-    var loadingEl = document.getElementById('convos-loading');
-    if (loadingEl) {
-      var runTpl = document.getElementById('snippet-loading-running');
-      loadingEl.innerHTML = runTpl ? runTpl.innerHTML : '';
-    }
-
-    httpJson('/setup/api/convos/setup', {
+    httpJson('/setup/api/setup', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload)
@@ -349,80 +362,17 @@
       if (!data.success) {
         throw new Error(data.error || 'Setup failed');
       }
-
-      appendLog('Convos invite created. Waiting for join...\n');
-
-      // Hide loading
-      if (loadingEl) loadingEl.style.display = 'none';
-
-      // Generate QR on client from invite URL (qrcodejs: renders into element)
-      var qrImg = document.getElementById('convos-qr');
-      var qrWrap = document.getElementById('convos-qr-wrap');
-      if (data.inviteUrl && typeof QRCode !== 'undefined' && qrWrap) {
-        try {
-          qrWrap.innerHTML = '';
-          new QRCode(qrWrap, { text: data.inviteUrl, width: 200, height: 200 });
-          qrWrap.style.display = 'block';
-          if (qrImg) qrImg.style.display = 'none';
-        } catch (err) {
-          console.warn('[convos-setup] QR generation failed:', err);
-        }
-      } else if (!data.inviteUrl) {
-        // no invite URL
-      } else if (typeof QRCode === 'undefined') {
-        console.warn('[convos-setup] QR script failed to load; QR not shown');
+      appendLog('Setup complete.\n');
+      if (data.publicAddress) {
+        setXmtpAddress(data.publicAddress);
+        appendLog('XMTP address: ' + data.publicAddress + '\n');
       }
-
-      // Show QR info section
-      var qrInfoEl = document.getElementById('qr-info');
-      if (qrInfoEl) qrInfoEl.style.display = 'block';
-
-      // Show invite URL
-      var inviteUrlEl = document.getElementById('convos-invite-url');
-      if (inviteUrlEl) {
-        inviteUrlEl.textContent = data.inviteUrl;
-        inviteUrlEl.style.display = 'block';
-      }
-
-      // Hide start button, update status
-      startSetupBtn.style.display = 'none';
-      setStatus('Waiting for join...', 'pending');
-
-      // Poll for join status
-      var pollInterval = setInterval(function () {
-        httpJson('/setup/api/convos/join-status').then(function (state) {
-          if (state.joined && !convosJoined) {
-            convosJoined = true;
-            clearInterval(pollInterval);
-
-            // Update join status badge
-            var joinStatusEl = document.getElementById('join-status');
-            if (joinStatusEl) {
-              joinStatusEl.textContent = 'Joined';
-              joinStatusEl.className = 'qr-info-value status joined';
-            }
-
-            if (completeSetupBtn) {
-              completeSetupBtn.style.display = 'block';
-            }
-            runCompleteSetup();
-          }
-        }).catch(function () {
-          // Ignore polling errors
-        });
-      }, 3000);
-
-      // Stop polling after 5 minutes
-      setTimeout(function () {
-        clearInterval(pollInterval);
-      }, 300000);
+      setStatus('Ready', 'success');
+      startSetupBtn.classList.remove('loading');
+      startSetupBtn.textContent = 'Start Setup';
+      updateStartSetupEnabled();
+      refreshStatus();
     }).catch(function (err) {
-      if (loadingEl) {
-        var errTpl = document.getElementById('snippet-loading-error');
-        loadingEl.innerHTML = errTpl ? errTpl.innerHTML : '';
-        var msgEl = loadingEl.querySelector('.snippet-error-message');
-        if (msgEl) msgEl.textContent = 'Error: ' + err.message;
-      }
       showError(err.message);
       startSetupBtn.classList.remove('loading');
       startSetupBtn.textContent = 'Start Setup';
@@ -431,41 +381,10 @@
     });
   }
 
-  // Finish Setup - calls convos.setup.complete RPC
-  function runCompleteSetup() {
-    if (!completeSetupBtn) return;
-
-    hideError();
-    completeSetupBtn.disabled = true;
-    completeSetupBtn.textContent = 'Completing setup...';
-    showLog('Finalizing Convos configuration...\n');
-
-    httpJson('/setup/api/convos/complete-setup', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({})
-    }).then(function (data) {
-      if (data.ok) {
-        appendLog('Setup complete!\n');
-        completeSetupBtn.textContent = 'Setup Complete!';
-        completeSetupBtn.classList.add('success');
-        setStatus('Ready', 'success');
-      } else {
-        showError(data.error || 'Setup failed');
-        completeSetupBtn.disabled = false;
-        completeSetupBtn.textContent = 'Finish Setup';
-      }
-      return refreshStatus();
-    }).catch(function (err) {
-      appendLog('\nError: ' + String(err) + '\n');
-      showError(String(err));
-      completeSetupBtn.disabled = false;
-      completeSetupBtn.textContent = 'Finish Setup';
-    });
-  }
-
   if (startSetupBtn) startSetupBtn.onclick = runStartSetup;
-  if (completeSetupBtn) completeSetupBtn.onclick = runCompleteSetup;
+
+  if (xmtpAddressCopyBtn) xmtpAddressCopyBtn.onclick = copyXmtpAddress;
+  if (xmtpAddressValue) xmtpAddressValue.onclick = copyXmtpAddress;
 
   if (authSecretEl) {
     authSecretEl.addEventListener('input', updateStartSetupEnabled);
@@ -478,20 +397,4 @@
   // Initial load
   setStartSetupLoading(true);
   refreshStatus();
-
-  // Only show "Already configured" when Convos channel is actually set up,
-  // not just because a config file exists from onboarding.
-  httpJson('/setup/api/status').then(function (data) {
-    if (data.convosConfigured) {
-      var loadingEl = document.getElementById('convos-loading');
-      if (loadingEl) {
-        var doneTpl = document.getElementById('snippet-already-configured');
-        loadingEl.innerHTML = doneTpl ? doneTpl.innerHTML : '';
-      }
-      if (startSetupBtn) startSetupBtn.style.display = 'none';
-      setStatus('Ready', 'success');
-    }
-  }).catch(function () {
-    // Ignore - status will be loaded by refreshStatus
-  });
 })();
