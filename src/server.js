@@ -155,12 +155,17 @@ function sleep(ms) {
 }
 
 const GATEWAY_PROBE_TIMEOUT_MS = 5_000;
+const MAX_GATEWAY_RETRIES = 3;
 
 async function waitForGatewayReady(opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 20_000;
   const start = Date.now();
   const paths = ["/openclaw", "/clawdbot", "/"];
   while (Date.now() - start < timeoutMs) {
+    if (!gatewayProc) {
+      console.error("[gateway] Process exited before becoming ready");
+      return false;
+    }
     for (const p of paths) {
       const controller = new AbortController();
       const probeTimeoutId = setTimeout(() => controller.abort(), GATEWAY_PROBE_TIMEOUT_MS);
@@ -225,7 +230,7 @@ async function startGateway() {
   ];
 
   const proc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
-    stdio: "inherit",
+    stdio: ["inherit", "inherit", "pipe"],
     env: {
       ...process.env,
       OPENCLAW_STATE_DIR: STATE_DIR,
@@ -234,6 +239,12 @@ async function startGateway() {
       CLAWDBOT_STATE_DIR: process.env.CLAWDBOT_STATE_DIR || STATE_DIR,
       CLAWDBOT_WORKSPACE_DIR: process.env.CLAWDBOT_WORKSPACE_DIR || WORKSPACE_DIR,
     },
+  });
+  let stderrBuf = "";
+  proc.stderr.on("data", (chunk) => {
+    const text = chunk.toString();
+    stderrBuf += text;
+    process.stderr.write(`[gateway:err] ${text}`);
   });
   gatewayProc = proc;
 
@@ -246,6 +257,9 @@ async function startGateway() {
 
   proc.on("exit", (code, signal) => {
     console.error(`[gateway] exited code=${code} signal=${signal}`);
+    if (code !== 0 && stderrBuf) {
+      console.error(`[gateway] stderr output:\n${stderrBuf}`);
+    }
     if (gatewayProc === proc) gatewayProc = null;
   });
 }
@@ -255,11 +269,20 @@ async function ensureGatewayRunning() {
   if (gatewayProc) return { ok: true };
   if (!gatewayStarting) {
     gatewayStarting = (async () => {
-      await startGateway();
-      const ready = await waitForGatewayReady({ timeoutMs: 20_000 });
-      if (!ready) {
-        throw new Error("Gateway did not become ready in time");
+      for (let attempt = 1; attempt <= MAX_GATEWAY_RETRIES; attempt++) {
+        await startGateway();
+        const ready = await waitForGatewayReady({ timeoutMs: 20_000 });
+        if (ready) return;
+        console.error(`[gateway] Attempt ${attempt}/${MAX_GATEWAY_RETRIES} failed`);
+        if (gatewayProc) {
+          try {
+            gatewayProc.kill("SIGTERM");
+          } catch {}
+          gatewayProc = null;
+        }
+        if (attempt < MAX_GATEWAY_RETRIES) await sleep(1000);
       }
+      throw new Error("Gateway did not become ready after retries");
     })().finally(() => {
       gatewayStarting = null;
     });
