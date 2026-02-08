@@ -36,7 +36,7 @@ const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
 // Gateway admin token (protects OpenClaw gateway + Control UI).
 // Must be stable across restarts. If not provided via env, persist it in the state dir.
 function resolveGatewayToken() {
-  const envTok = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || process.env.CLAWDBOT_GATEWAY_TOKEN?.trim();
+  const envTok = process.env.OPENCLAW_GATEWAY_TOKEN?.trim();
   if (envTok) return envTok;
 
   const tokenPath = path.join(STATE_DIR, "gateway.token");
@@ -59,8 +59,6 @@ function resolveGatewayToken() {
 
 const OPENCLAW_GATEWAY_TOKEN = resolveGatewayToken();
 process.env.OPENCLAW_GATEWAY_TOKEN = OPENCLAW_GATEWAY_TOKEN;
-// Backward-compat: some older flows expect CLAWDBOT_GATEWAY_TOKEN.
-process.env.CLAWDBOT_GATEWAY_TOKEN = process.env.CLAWDBOT_GATEWAY_TOKEN || OPENCLAW_GATEWAY_TOKEN;
 
 // Persist auth credentials across container restarts.
 // Saved to STATE_DIR/auth.json with restricted permissions.
@@ -155,7 +153,6 @@ function sleep(ms) {
 }
 
 const GATEWAY_PROBE_TIMEOUT_MS = 5_000;
-const MAX_GATEWAY_RETRIES = 3;
 
 async function waitForGatewayReady(opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 20_000;
@@ -230,7 +227,7 @@ async function startGateway() {
   ];
 
   const proc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
-    stdio: ["inherit", "inherit", "pipe"],
+    stdio: "inherit",
     env: {
       ...process.env,
       OPENCLAW_STATE_DIR: STATE_DIR,
@@ -239,12 +236,6 @@ async function startGateway() {
       CLAWDBOT_STATE_DIR: process.env.CLAWDBOT_STATE_DIR || STATE_DIR,
       CLAWDBOT_WORKSPACE_DIR: process.env.CLAWDBOT_WORKSPACE_DIR || WORKSPACE_DIR,
     },
-  });
-  let stderrBuf = "";
-  proc.stderr.on("data", (chunk) => {
-    const text = chunk.toString();
-    stderrBuf += text;
-    process.stderr.write(`[gateway:err] ${text}`);
   });
   gatewayProc = proc;
 
@@ -257,9 +248,6 @@ async function startGateway() {
 
   proc.on("exit", (code, signal) => {
     console.error(`[gateway] exited code=${code} signal=${signal}`);
-    if (code !== 0 && stderrBuf) {
-      console.error(`[gateway] stderr output:\n${stderrBuf}`);
-    }
     if (gatewayProc === proc) gatewayProc = null;
   });
 }
@@ -269,20 +257,11 @@ async function ensureGatewayRunning() {
   if (gatewayProc) return { ok: true };
   if (!gatewayStarting) {
     gatewayStarting = (async () => {
-      for (let attempt = 1; attempt <= MAX_GATEWAY_RETRIES; attempt++) {
-        await startGateway();
-        const ready = await waitForGatewayReady({ timeoutMs: 20_000 });
-        if (ready) return;
-        console.error(`[gateway] Attempt ${attempt}/${MAX_GATEWAY_RETRIES} failed`);
-        if (gatewayProc) {
-          try {
-            gatewayProc.kill("SIGTERM");
-          } catch {}
-          gatewayProc = null;
-        }
-        if (attempt < MAX_GATEWAY_RETRIES) await sleep(1000);
+      await startGateway();
+      const ready = await waitForGatewayReady({ timeoutMs: 20_000 });
+      if (!ready) {
+        throw new Error("Gateway did not become ready in time");
       }
-      throw new Error("Gateway did not become ready after retries");
     })().finally(() => {
       gatewayStarting = null;
     });
@@ -425,6 +404,7 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
   res.json({
     configured,
     gatewayTarget: GATEWAY_TARGET,
+    gatewayToken: OPENCLAW_GATEWAY_TOKEN,
     openclawVersion: version.output.trim(),
     channelsAddHelp: channelsHelp.output,
     authGroups,
@@ -732,7 +712,7 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
       stateDir: STATE_DIR,
       workspaceDir: WORKSPACE_DIR,
       configPath: configPath(),
-      gatewayTokenFromEnv: Boolean(process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || process.env.CLAWDBOT_GATEWAY_TOKEN?.trim()),
+      gatewayTokenFromEnv: Boolean(process.env.OPENCLAW_GATEWAY_TOKEN?.trim()),
       gatewayTokenPersisted: fs.existsSync(path.join(STATE_DIR, "gateway.token")),
       railwayCommit: process.env.RAILWAY_GIT_COMMIT_SHA || null,
     },

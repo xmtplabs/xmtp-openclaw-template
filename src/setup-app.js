@@ -44,6 +44,10 @@
   var xmtpAddressCopyBtn = document.getElementById('xmtp-address-copy');
   var setupFieldsEl = document.getElementById('setup-fields');
 
+  // Settings links (deeplinked with gateway token)
+  var settingsLinkHeader = document.getElementById('settings-link-header');
+  var settingsLinkAdvanced = document.getElementById('settings-link-advanced');
+
   // Auth groups from status (includes envVarSet per provider)
   var authGroupsData = [];
 
@@ -201,6 +205,13 @@
 
       var addr = j.publicAddress || (j.xmtp && j.xmtp.publicAddress);
       setXmtpAddress(addr);
+
+      // Deeplink settings links with gateway token
+      if (j.gatewayToken) {
+        var tokenUrl = '/openclaw?token=' + encodeURIComponent(j.gatewayToken);
+        if (settingsLinkHeader) settingsLinkHeader.href = tokenUrl;
+        if (settingsLinkAdvanced) settingsLinkAdvanced.href = tokenUrl;
+      }
 
       setStartSetupLoading(false);
 
