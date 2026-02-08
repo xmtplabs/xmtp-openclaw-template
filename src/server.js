@@ -410,6 +410,7 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
     authGroups,
     publicAddress: publicAddress ?? undefined,
     xmtp: publicAddress != null ? { configured: !!xmtpConfigured, publicAddress } : undefined,
+    xmtpEnv: XMTP_ENV === "dev" ? "dev" : "production",
   });
 });
 

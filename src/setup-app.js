@@ -42,6 +42,7 @@
   var xmtpAddressBlock = document.getElementById('xmtp-address-block');
   var xmtpAddressValue = document.getElementById('xmtp-address-value');
   var xmtpAddressCopyBtn = document.getElementById('xmtp-address-copy');
+  var xmtpChatDmLink = document.getElementById('xmtp-chat-dm-link');
   var setupFieldsEl = document.getElementById('setup-fields');
 
   // Settings links (deeplinked with gateway token)
@@ -142,13 +143,16 @@
     startSetupBtn.disabled = !hasApiKey;
   }
 
-  function setXmtpAddress(addr) {
+  function setXmtpAddress(addr, xmtpEnv) {
     if (!addr) {
       if (xmtpAddressBlock) xmtpAddressBlock.style.display = 'none';
       if (setupFieldsEl) setupFieldsEl.style.display = '';
       return;
     }
     if (xmtpAddressValue) xmtpAddressValue.textContent = addr;
+    if (xmtpChatDmLink) {
+      xmtpChatDmLink.href = 'http://xmtp.chat/' + (xmtpEnv || 'production') + '/dm/' + addr;
+    }
     if (xmtpAddressBlock) xmtpAddressBlock.style.display = '';
     if (setupFieldsEl) setupFieldsEl.style.display = 'none';
   }
@@ -204,7 +208,7 @@
       applyAuthSecretFromEnv();
 
       var addr = j.publicAddress || (j.xmtp && j.xmtp.publicAddress);
-      setXmtpAddress(addr);
+      setXmtpAddress(addr, j.xmtpEnv);
 
       // Deeplink settings links with gateway token
       if (j.gatewayToken) {
