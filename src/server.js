@@ -90,6 +90,13 @@ function restoreAuthCredentials() {
 
 restoreAuthCredentials();
 
+function ensureMemoryFile() {
+  const memPath = path.join(WORKSPACE_DIR, "MEMORY.md");
+  if (!fs.existsSync(memPath)) {
+    fs.writeFileSync(memPath, "", { encoding: "utf8" });
+  }
+}
+
 // Where the gateway will listen internally (we proxy to it).
 const INTERNAL_GATEWAY_PORT = Number.parseInt(process.env.INTERNAL_GATEWAY_PORT ?? "18789", 10);
 const INTERNAL_GATEWAY_HOST = process.env.INTERNAL_GATEWAY_HOST ?? "127.0.0.1";
@@ -226,6 +233,7 @@ async function startGateway() {
 
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+  ensureMemoryFile();
 
   const args = [
     "gateway",
@@ -441,6 +449,7 @@ app.post("/setup/api/setup", requireSetupAuth, async (req, res) => {
 
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+    ensureMemoryFile();
 
     if (gatewayProc) {
       console.log("[setup] Stopping existing gateway...");
@@ -610,6 +619,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+  ensureMemoryFile();
 
   const payload = req.body || {};
   const idx = parseInt(payload.authGroup, 10);
@@ -896,6 +906,7 @@ app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
 app.get("/setup/export", requireSetupAuth, async (_req, res) => {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+  ensureMemoryFile();
 
   res.setHeader("content-type", "application/gzip");
   res.setHeader(
