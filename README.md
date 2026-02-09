@@ -2,15 +2,18 @@
 
 1‑click deploy for **OpenClaw** on Railway with **/setup** wizard. Uses the [XMTP channel](https://github.com/xmtplabs/openclaw/blob/feat/xmtp-and-convos-extensions/docs/channels/xmtp.md).
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/_1f6xq?referralCode=UxaXte&utm_medium=integration&utm_source=template&utm_campaign=generic)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/xmtp-openclaw-template?referralCode=UxaXte&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 ### Setup
 
-> XMTP extension is not in upstream OpenClaw yet. Use the [xmtplabs/openclaw](https://github.com/xmtplabs/openclaw) fork, branch `feat/xmtp-and-convos-extensions` ([PR #2](https://github.com/xmtplabs/openclaw/pull/2)).
+Install the XMTP plugin, then configure:
 
 ```bash
+openclaw plugins install @xmtp/openclaw
 openclaw configure
 ```
+
+Alternative: use the [xmtplabs/openclaw](https://github.com/xmtplabs/openclaw) fork (branch `feat/xmtp-and-convos-extensions`) and run `openclaw plugins install ./extensions/xmtp` from the repo.
 
 Choose environment (`production`/`dev`) and keys (`Random` or `Custom`). The wizard displays your agent's public address.
 
